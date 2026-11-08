@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.cache/
+test-results/
+playwright-report/
+research/data/
+research/runs/
+research/.venv/
+__pycache__/
+*.pyc
+*.onnx
+*.safetensors
+*.bin
+.sites-runtime/
+*.tsbuildinfo
+*.pt
+*.pth
