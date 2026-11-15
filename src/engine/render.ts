@@ -18,7 +18,7 @@ export async function renderPage(
   scale = 1,
 ) {
   const page: PagePlan = doc.pages[index],
-    s = doc.request.settings,
+    s = doc.renderSettings || doc.request.settings,
     c = canvas(page.width * scale, page.height * scale),
     ctx = c.getContext("2d")!;
   ctx.scale(scale, scale);
@@ -86,8 +86,9 @@ export async function renderPage(
     );
     ctx.globalAlpha = item.opacity;
     ctx.fillStyle = s.ink;
-    ctx.font = `${s.size}px "${family}"`;
+    ctx.font = `${item.fontWeight || 400} ${s.size}px "${family}"`;
     ctx.letterSpacing = `${s.letterSpacing}px`;
+    ctx.fontKerning = 'normal';
     if (item.image) {
       const image = await colored(item.image);
       const em = item.imageEm ?? 64;
@@ -126,7 +127,7 @@ export async function renderPage(
           }
         }
       }
-    } else ctx.fillText(item.text, 0, 0);
+    } else ctx.fillText(item.renderText ?? item.text, 0, 0);
     ctx.restore();
   }
   return c;

@@ -23,6 +23,7 @@ export interface UploadedWord {
   baseline: number;
   em: number;
   line?: number;
+  page?: number;
 }
 export interface Profile {
   id: string;
@@ -39,6 +40,11 @@ export interface Profile {
   wordSamples?: UploadedWord[];
   sourceTranscript?: string;
   sourceReadWarnings?: string[];
+  pdf?: {
+    totalPages:number;
+    pages:number[];
+    analysis:{page:number;dpi:number;rotation:number;bodyHeight:number;strokeRatio:number;slant:number}[];
+  };
 }
 export interface Style {
   id: string;
@@ -56,6 +62,10 @@ export interface Settings {
   letterSpacing: number;
   margin: number;
   variation: number;
+  wordConsistency?: number;
+  strokeVariation?: number;
+  baselineVariation?: number;
+  styleFidelity?: number;
   ink: string;
   opacity: number;
   slant: number;
@@ -69,6 +79,10 @@ export const defaults: Settings = {
   letterSpacing: 0,
   margin: 55,
   variation: 0.22,
+  wordConsistency: 0.9,
+  strokeVariation: 0.12,
+  baselineVariation: 0.15,
+  styleFidelity: 0.9,
   ink: "#243d82",
   opacity: 0.95,
   slant: 0,
@@ -76,6 +90,7 @@ export const defaults: Settings = {
   format: "a4",
 };
 export interface WritingDocument {
+  mode?: "default" | "personalized";
   id: string;
   name: string;
   text: string;
@@ -100,6 +115,14 @@ export interface GenerationRequest {
   fallback: boolean;
 }
 export interface DrawItem {
+  inkLeft?: number;
+  inkRight?: number;
+  renderText?: string;
+  fontWeight?: number;
+  line?: number;
+  wordIndex?: number;
+  inkAscent?: number;
+  inkDescent?: number;
   text: string;
   x: number;
   y: number;
@@ -123,12 +146,25 @@ export interface PagePlan {
   baseline: number;
 }
 export interface GeneratedDocument {
+  renderSettings?: Settings;
+  quality?: HandwritingQuality;
   pages: PagePlan[];
   request: GenerationRequest;
   missing: string[];
   source: string;
   reusedWords?: string[];
   synthesizedWords?: string[];
+}
+export interface HandwritingQuality {
+  nominalSize: number;
+  effectiveSize: number;
+  checkedWords: number;
+  checkedLines: number;
+  checkedPages: number;
+  normalizedImages: number;
+  sizeCorrections: number;
+  variantsUsed: number;
+  warnings: string[];
 }
 export interface NeuralStatus {
   ready: boolean;

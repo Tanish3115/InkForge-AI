@@ -1,4 +1,17 @@
-import type { Profile, WritingDocument } from "../types";
+import { defaults, type Profile, type Settings, type WritingDocument } from "../types";
+
+const refinementKeys = ["wordConsistency", "strokeVariation", "baselineVariation", "styleFidelity"] as const;
+
+/** Upgrade existing drafts without changing their nominal writing size. */
+export function withRefinementDefaults(settings: Settings): Settings {
+  return {
+    ...settings,
+    wordConsistency: settings.wordConsistency ?? defaults.wordConsistency,
+    strokeVariation: settings.strokeVariation ?? defaults.strokeVariation,
+    baselineVariation: settings.baselineVariation ?? defaults.baselineVariation,
+    styleFidelity: settings.styleFidelity ?? defaults.styleFidelity,
+  };
+}
 let connection: Promise<IDBDatabase> | undefined;
 async function db() {
   connection ??= new Promise((resolve, reject) => {
@@ -36,11 +49,12 @@ export const storage = {
   profiles: () =>
     transact<Profile[]>("profiles", "readonly", (s) => s.getAll()),
   documents: () =>
-    transact<WritingDocument[]>("documents", "readonly", (s) => s.getAll()),
+    transact<WritingDocument[]>("documents", "readonly", (s) => s.getAll()).then(documents =>
+      documents.map(document => ({ ...document, settings: withRefinementDefaults(document.settings) }))),
   saveProfile: (p: Profile) =>
     transact("profiles", "readwrite", (s) => s.put(p)),
   saveDocument: (d: WritingDocument) =>
-    transact("documents", "readwrite", (s) => s.put(d)),
+    transact("documents", "readwrite", (s) => s.put({ ...d, settings: withRefinementDefaults(d.settings) })),
   deleteProfile: (id: string) =>
     transact("profiles", "readwrite", (s) => s.delete(id)),
   deleteDocument: (id: string) =>
@@ -62,6 +76,12 @@ export function validateProfile(value: unknown): Profile {
     Array.isArray(p.glyphs)
   )
     throw new Error("This is not a compatible InkForge glyph profile.");
+  if(p.pdf!==undefined){
+    const pdf=p.pdf;
+    if(!pdf||!Number.isInteger(pdf.totalPages)||pdf.totalPages<1||pdf.totalPages>100||
+      !Array.isArray(pdf.pages)||pdf.pages.length<1||pdf.pages.length>20||new Set(pdf.pages).size!==pdf.pages.length||pdf.pages.some(page=>!Number.isInteger(page)||page<1||page>pdf.totalPages)||
+      !Array.isArray(pdf.analysis)||pdf.analysis.length!==pdf.pages.length||pdf.analysis.some(page=>!page||!pdf.pages.includes(page.page)||![page.dpi,page.rotation,page.bodyHeight,page.strokeRatio,page.slant].every(Number.isFinite)||page.dpi<1||page.dpi>450||![0,90,180,270].includes(page.rotation)||page.bodyHeight<0||page.bodyHeight>20000||page.strokeRatio<0||page.strokeRatio>5||Math.abs(page.slant)>1)||new Set(pdf.analysis.map(page=>page.page)).size!==pdf.pages.length)throw new Error('Invalid PDF reference metadata.');
+  }
   let total = 0;
   for (const [key, variants] of Object.entries(p.glyphs)) {
     if (
@@ -112,16 +132,17 @@ export function validateProfile(value: unknown): Profile {
       "The profile has no usable glyphs or five valid neural references.",
     );
   if (p.wordSamples !== undefined) {
-    if (!Array.isArray(p.wordSamples) || p.wordSamples.length > 160) throw new Error("Invalid uploaded word library.");
+    if (!Array.isArray(p.wordSamples) || p.wordSamples.length > (p.pdf?1000:160)) throw new Error("Invalid uploaded word library.");
     for (const word of p.wordSamples) {
       if (!word || typeof word.id !== "string" || !word.id || word.id.length > 80 || typeof word.text !== "string" || word.text.length > 160 ||
           ![word.width,word.height,word.baseline,word.em].every(Number.isFinite) || word.width < 1 || word.width > 2600 || word.height < 1 || word.height > 2600 || word.baseline < 0 || word.baseline > word.height || word.em < 1 || word.em > 2600 ||
           typeof word.image !== "string" || word.image.length > 3_000_000 || !/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(word.image) ||
-          (word.line !== undefined && (!Number.isInteger(word.line) || word.line < 0 || word.line > 39))) throw new Error("An uploaded word image or its measurements are invalid.");
+          (word.line !== undefined && (!Number.isInteger(word.line) || word.line < 0 || word.line > (p.pdf?3999:39))) ||
+          (word.page !== undefined && (!p.pdf || !Number.isInteger(word.page) || !p.pdf.pages.includes(word.page)))) throw new Error("An uploaded word image or its measurements are invalid.");
     }
   }
   if (p.sourceTranscript !== undefined && (typeof p.sourceTranscript !== "string" || p.sourceTranscript.length > 30000)) throw new Error("Invalid sample transcript.");
-  if (p.sourceReadWarnings !== undefined && (!Array.isArray(p.sourceReadWarnings) || p.sourceReadWarnings.length > 20 || p.sourceReadWarnings.some(w=>typeof w!=="string" || w.length>1000))) throw new Error("Invalid recognition warnings.");
+  if (p.sourceReadWarnings !== undefined && (!Array.isArray(p.sourceReadWarnings) || p.sourceReadWarnings.length > (p.pdf?100:20) || p.sourceReadWarnings.some(w=>typeof w!=="string" || w.length>1000))) throw new Error("Invalid recognition warnings.");
   return { ...p, id: crypto.randomUUID(), createdAt: Date.now() };
 }
 export async function importProfile(file: File) {
@@ -136,6 +157,7 @@ export async function importDocument(file: File): Promise<WritingDocument> {
   if (
     !d ||
     d.version !== 1 ||
+    (d.mode !== undefined && !["default", "personalized"].includes(d.mode)) ||
     typeof d.text !== "string" ||
     d.text.length > 30000 ||
     typeof d.name !== "string" ||
@@ -150,6 +172,11 @@ export async function importDocument(file: File): Promise<WritingDocument> {
   )
     throw new Error("This is not a compatible InkForge document backup.");
   const s = d.settings;
+  for (const key of refinementKeys) {
+    const value = s[key];
+    if (value !== undefined && (!Number.isFinite(value) || value < 0 || value > 1))
+      throw new Error("The backup has invalid handwriting refinement settings.");
+  }
   for (const [key, min, max] of [
     ["size", 16, 50],
     ["lineSpacing", 1.1, 2.5],
@@ -170,6 +197,7 @@ export async function importDocument(file: File): Promise<WritingDocument> {
     throw new Error("The backup has invalid paper or ink settings.");
   return {
     ...d,
+    settings: withRefinementDefaults(s),
     id: crypto.randomUUID(),
     updatedAt: Date.now(),
     fallback: d.fallback === true,

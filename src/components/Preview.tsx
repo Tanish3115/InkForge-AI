@@ -109,7 +109,7 @@ export default function Preview({
               Your next page<br/><em>starts here.</em>
             </h3>
             <p>
-              {personalized ? sampleReady ? 'Your sample is ready. Type your words and bring them onto the page.' : 'Upload your handwriting sample, then type the words you want to create.' : 'Choose a style, add your words, and watch your page take shape.'}
+              {personalized ? sampleReady ? 'Your sample is ready. Type your words and bring them onto the page.' : 'Type your words to generate from real local IAM handwriting references, or optionally upload your own sample.' : 'Choose a style, add your words, and watch your page take shape.'}
             </p>
             <div className="preview-mini-tags"><span>Live canvas</span><i/><span>Print-ready export</span></div>
           </div>

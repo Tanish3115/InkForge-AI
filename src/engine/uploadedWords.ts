@@ -15,6 +15,16 @@ export function uploadedWordIndex(profile?: Profile) {
   return index;
 }
 
+export function uploadedWordVariants(profile?:Profile){
+  const index=new Map<string,UploadedWord[]>();
+  for(const word of profile?.wordSamples||[]){
+    const key=wordKey(word.text);if(!key||/\s/.test(key))continue;
+    const pool=index.get(key)||[];
+    if(!pool.some(sample=>sample.image===word.image)){pool.push(word);index.set(key,pool);}
+  }
+  return index;
+}
+
 export function uploadCoverage(text: string, profile?: Profile) {
   const index = uploadedWordIndex(profile);
   const tokens = text.match(/\S+/g) || [];
@@ -25,5 +35,9 @@ export function uploadCoverage(text: string, profile?: Profile) {
 
 export function sourceTranscript(words: UploadedWord[]) {
   const lines = [...new Set(words.map(word => word.line ?? 0))].sort((a, b) => a - b);
-  return lines.map(line => words.filter(word => (word.line ?? 0) === line).map(word => word.text.trim()).join(' ')).join('\n');
+  return lines.map((line,index) => {
+    const group=words.filter(word=>(word.line??0)===line);
+    const previous=index?words.find(word=>(word.line??0)===lines[index-1]):undefined;
+    return (previous&&previous.page!==group[0].page?'\n':'')+group.map(word=>word.text.trim()).join(' ');
+  }).join('\n');
 }

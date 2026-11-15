@@ -56,7 +56,7 @@ export function useStudio() {
     [, setHistoryVersion] = useState(0),
     toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const profile = mode === "personalized" ? profiles.find((p) => p.id === profileId) : undefined;
-  const engine = mode === "default" ? defaultEngine : profile?.kind === "reference" ? "neural" : personalEngine;
+  const engine = mode === "default" ? defaultEngine : !profile || profile.kind === "reference" ? "neural" : personalEngine;
   const styleId = engine === "neural" ? neuralStyleId : presetStyleId;
   const notify = useCallback((value: string) => {
     setMessage(value);
@@ -163,7 +163,15 @@ export function useStudio() {
     controller.current = run;
     try {
       const onlyUploaded = mode === 'personalized' && profile?.wordSamples?.length && !uploadCoverage(text, profile).missing.length;
-      if (engine === "neural" && !neural.ready && !onlyUploaded)
+      if (mode === "personalized" && !profile) {
+        const response = await fetch("http://127.0.0.1:8000/health", { signal: AbortSignal.any([run.signal, AbortSignal.timeout(5000)]) });
+        if (!response.ok) throw new Error("The local handwriting service is unavailable.");
+        const status = await response.json();
+        setNeural(status);
+        if (!status.ready || !status.human_reference?.ready)
+          throw new Error(status.human_reference?.reason || status.reason || "Prepare the local IAM dataset before generating without an upload.");
+      }
+      if (engine === "neural" && !neural.ready && !onlyUploaded && !(mode === "personalized" && !profile))
         throw new Error(
           mode === "personalized" && profile?.kind === "reference"
             ? "New or unmatched words require the local neural service. Start it and click Check local neural service, or correct the uploaded labels if those words are already in your note. Saved matching words can render without synthesis."
@@ -207,10 +215,10 @@ export function useStudio() {
           ? mode === "personalized"
             ? "This is an advanced letter profile with missing letters. Upload your original handwriting image using Upload handwriting sample for automatic generation."
             : `Unsupported characters: ${result.missing.join(" ")}. Choose another preset or edit the text.`
-          : `${result.pages.length} actual handwritten page${result.pages.length > 1 ? "s" : ""} generated.`,
+          : `${result.pages.length} page${result.pages.length > 1 ? "s" : ""} generated.`,
       );
     } catch (e) {
-      if (!run.signal.aborted && version === selectionVersion.current) setError(e instanceof Error ? e.message : String(e));
+      if (!run.signal.aborted && version === selectionVersion.current) setError(e instanceof TypeError && mode === "personalized" && !profile ? "Start the free local handwriting service at 127.0.0.1:8000 to generate using real IAM reference crops. No font fallback is used." : e instanceof Error ? e.message : String(e));
     } finally {
       if (controller.current === run) setBusy(false);
     }
@@ -265,6 +273,7 @@ export function useStudio() {
         styleId,
         engine,
         fallback,
+        mode,
         profileId: mode === "personalized" ? profileId : undefined,
         seed,
         updatedAt: Date.now(),
@@ -337,7 +346,7 @@ export function useStudio() {
         );
       }
     } else {
-      setModeState("default");
+      setModeState(d.mode === "personalized" ? "personalized" : "default");
       setProfileId("");
       setDefaultEngine(d.engine || "browser");
     }

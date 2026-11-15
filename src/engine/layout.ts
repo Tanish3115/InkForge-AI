@@ -14,18 +14,28 @@ export function pageSize(format: "a4" | "letter") {
     ? { width: 793.7008, height: 1122.5197 }
     : { width: 816, height: 1056 };
 }
-export type Measured = Pick<DrawItem, "width" | "glyphs" | "image" | "imageHeight" | "imageBaseline" | "imageEm" | "origin" | "sourceWordId">;
+export type Measured = Pick<DrawItem, "width" | "glyphs" | "image" | "imageHeight" | "imageBaseline" | "imageEm" | "origin" | "sourceWordId" | "renderText" | "fontWeight" | "inkAscent" | "inkDescent" | "inkLeft" | "inkRight">;
+export interface MeasureContext {wordIndex:number;offset:number}
+export function inkBounds(item:Measured,slant:number){
+  const shear=Math.tan(slant*Math.PI/180),a=-shear*(item.inkAscent||0),b=shear*(item.inkDescent||0);
+  return {left:(item.inkLeft??0)+Math.min(a,b),right:(item.inkRight??item.width)+Math.max(a,b)};
+}
 export function layout(
   request: GenerationRequest,
-  measure: (text: string) => Measured,
+  measure: (text: string,context:MeasureContext) => Measured,
   ascent: number,
   descent: number,
 ): PagePlan[] {
   const { settings: s } = request,
-    size = pageSize(s.format),
-    random = seeded(request.seed);
-  // Personal samples define the style; decorative jitter should stay subtle.
-  const variation = request.mode === "personalized" ? Math.min(s.variation, 0.15) : s.variation;
+    size = pageSize(s.format);
+  const baselineVariation=Math.max(0,Math.min(1,s.baselineVariation??.15));
+  let lineIndex=0,wordIndex=0,lineShift=0,spacing=1;
+  const lineStyle=()=>{
+    const random=seeded(request.seed^Math.imul(lineIndex+1,104729));
+    lineShift=lineShift*.6+(random()-.5)*s.size*.06*baselineVariation;
+    spacing=1+(random()-.5)*.025*Math.min(1,s.variation);
+  };
+  lineStyle();
   if (
     s.margin * 2 + s.size * 4 > size.width ||
     s.margin * 2 + ascent + descent + 20 > size.height
@@ -48,54 +58,58 @@ export function layout(
   };
   let page = newPage(),
     x = s.margin,
-    y = baseline;
+    y = baseline,previousRight=s.margin;
   const newLine = () => {
     x = s.margin;
     y += lineHeight;
+    lineIndex++;lineStyle();
+    previousRight=s.margin;
   };
   const ensurePage = () => {
     if (y + descent + guard > size.height - s.margin) {
       page = newPage();
       x = s.margin;
       y = baseline;
+      previousRight=s.margin;
     }
   };
-  const place = (text: string) => {
-    const m = measure(text),
-      wordVariation = m.origin === 'uploaded' ? 0 : variation,
-      scale = 1 + (random() - 0.5) * 0.035 * wordVariation,
-      width = m.width * scale;
-    if (x + width > size.width - s.margin - guard && x > s.margin) newLine();
-    if (width > size.width - s.margin * 2 - guard && text.length > 1) {
-      if (m.image) throw new Error('A handwritten word is wider than the available page. Reduce writing size or margins, then generate again.');
-      let part = "";
+  const place = (text: string,offset=0) => {
+    const m = measure(text,{wordIndex,offset}),scale=1,width=m.width,bounds=inkBounds(m,s.slant);
+    const span=(item:Measured)=>{const box=inkBounds(item,s.slant);return Math.max(item.width,box.right)-Math.min(0,box.left);};
+    if (span(m) > size.width - s.margin * 2 - guard && text.length > 1) {
+      if (m.image||m.glyphs) throw new Error('A handwritten word is wider than the available page. Reduce writing size or margins, then generate again.');
+      let part = "",partOffset=offset;
       for (const ch of text) {
         if (
           part &&
-          measure(part + ch).width > size.width - s.margin * 2 - guard
+          span(measure(part + ch,{wordIndex,offset:partOffset})) > size.width - s.margin * 2 - guard
         ) {
-          place(part);
+          place(part,partOffset);partOffset+=part.length;
           newLine();
           part = "";
         }
         part += ch;
       }
-      if (part) place(part);
+      if (part) place(part,partOffset);
       return;
     }
     ensurePage();
-    const jitter = (random() - 0.5) * s.size * 0.09 * wordVariation;
+    const origin=()=>Math.max(x,s.margin-bounds.left,previousRight+(x>s.margin?s.size*.03:0)-bounds.left);
+    let placeX=origin();
+    if(placeX+Math.max(width,bounds.right)>size.width-s.margin-guard&&x>s.margin){newLine();ensurePage();placeX=origin();}
+    if(placeX+Math.max(width,bounds.right)>size.width-s.margin+1)throw new Error('A character or word exceeds the page bounds. Reduce writing size or margins.');
     page.items.push({
       ...m,
       text,
-      x,
-      y: y + jitter,
+      x:placeX,
+      y: y + lineShift,
       width,
-      rotation: (random() - 0.5) * 0.035 * wordVariation,
+      rotation: 0,
       scale,
-      opacity: s.opacity * (1 - random() * 0.06 * wordVariation),
+      opacity: s.opacity,
+      line:lineIndex,wordIndex,
     });
-    x += width;
+    x=placeX+width;previousRight=placeX+bounds.right;
   };
   const tokens =
     request.text.replace(/\r\n?/g, "\n").match(/\n|[^\S\n]+|[^\s]+/g) || [];
@@ -109,10 +123,11 @@ export function layout(
         [...token.replace(/\t/g, "    ")].length *
         s.size *
         0.32 *
-        s.wordSpacing;
+        s.wordSpacing*spacing;
       continue;
     }
     place(token);
+    wordIndex++;
   }
   return pages;
 }

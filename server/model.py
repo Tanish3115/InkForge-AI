@@ -1,6 +1,8 @@
 """Real DiffusionPen adapter. Model files remain local and outside the web build."""
 import base64
+import hashlib
 import io
+import math
 import os
 import threading
 import time
@@ -15,11 +17,17 @@ MODEL_DIR = Path(os.environ.get("INKFORGE_MODEL_DIR", ROOT / ".cache/diffusionpe
 LOCK = threading.Lock()
 
 
-def normalize(image):
-    import cv2
-    image = ImageOps.exif_transpose(image).convert("RGB")
+def white_background(image):
+    """Preserve transparent pen ink instead of converting its background to black."""
     if image.width * image.height > 12_000_000:
         raise ValueError("Reference images must be below 12 megapixels.")
+    rgba = ImageOps.exif_transpose(image).convert("RGBA")
+    return Image.alpha_composite(Image.new("RGBA", rgba.size, "white"), rgba).convert("RGB")
+
+
+def normalize(image):
+    import cv2
+    image = white_background(image)
     array = np.array(image)
     gray = cv2.cvtColor(array, cv2.COLOR_RGB2GRAY)
     mask = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY_INV)[1]
@@ -69,6 +77,38 @@ def document_noise(seed, device):
     return torch.randn((1, 4, 8, 32), generator=generator, device=device)
 
 
+def validate_generation(words, variant_ids=None, stroke_variation=.12, style_fidelity=.9):
+    if not words or len(words) > 80 or any(not isinstance(word,str) or not word.strip() or len(word)>38 for word in words):
+        raise ValueError("Use 1–80 nonempty words with at most 38 characters per word in neural mode.")
+    for name,value in (("stroke variation",stroke_variation),("style fidelity",style_fidelity)):
+        if not isinstance(value,(int,float)) or not math.isfinite(value) or not 0<=value<=1:
+            raise ValueError(f"Use {name} between 0 and 1.")
+    variants = [0]*len(words) if not variant_ids else list(variant_ids)
+    if len(variants)!=len(words) or any(type(value) is not int or value not in (0,1,2) for value in variants):
+        raise ValueError("Provide one variant ID (0–2) per word.")
+    return variants
+
+
+def variant_strength(stroke_variation, style_fidelity):
+    """A bounded inference residual, not reconstructed pen pressure/trajectories."""
+    return .08*math.sqrt(stroke_variation)*(1-.5*style_fidelity)
+
+
+def contextual_noise(anchor, seed, word, variant=0, stroke_variation=.12, style_fidelity=.9):
+    """Keep a document anchor; vary only explicitly requested repeated-word forms.
+
+    The same word/variant remains stable across request batches and reordering.
+    No reference features are replaced and no global RNG state is consumed.
+    """
+    if variant==0 or stroke_variation==0:
+        return anchor.clone()
+    digest=hashlib.sha256(f"{seed}\0{word}\0{variant}".encode('utf-8')).digest()
+    residual_seed=int.from_bytes(digest[:8],'big') & ((1<<63)-1)
+    residual=document_noise(residual_seed,anchor.device).to(dtype=anchor.dtype)
+    strength=variant_strength(stroke_variation,style_fidelity)
+    return (anchor+strength*residual)/math.sqrt(1+strength*strength)
+
+
 class DiffusionPen:
     def __init__(self, checkpoint=None):
         import torch
@@ -106,20 +146,19 @@ class DiffusionPen:
         self.scheduler_config = DDIMScheduler.from_pretrained(str(MODEL_DIR / "sd15"), subfolder="scheduler", local_files_only=True).config
         self.unet.text_encoder.requires_grad_(False)
 
-    def generate(self, words, references, seed=42, steps=50):
+    def generate(self, words, references, seed=42, steps=50, variant_ids=None, stroke_variation=.12, style_fidelity=.9):
         import torch
         from diffusers import DDIMScheduler
-        if not words or len(words) > 80 or any(not word.strip() or len(word) > 38 for word in words):
-            raise ValueError("Use 1–80 nonempty words with at most 38 characters per word in neural mode.")
+        variants=validate_generation(words,variant_ids,stroke_variation,style_fidelity)
         started = time.perf_counter(); outputs = []
         scheduler = DDIMScheduler.from_config(self.scheduler_config)
         with torch.inference_mode():
             features = self.style(reference_tensor(references, self.device))
             anchor = document_noise(seed, self.device)
-            for word in words:
+            for word,variant in zip(words,variants):
                 tokens = self.tokenizer([word], padding="max_length", max_length=40, return_tensors="pt").to(self.device)
                 context = self.unet.text_encoder(**tokens).last_hidden_state
-                sample = anchor.clone()
+                sample = contextual_noise(anchor,seed,word,variant,stroke_variation,style_fidelity)
                 scheduler.set_timesteps(steps, device=self.device)
                 for step in scheduler.timesteps:
                     timestep = step.expand(1)
@@ -128,7 +167,10 @@ class DiffusionPen:
                 image = self.vae.decode(sample / .18215).sample
                 array = ((image / 2 + .5).clamp(0, 1)[0].cpu().permute(1, 2, 0).numpy() * 255).astype(np.uint8)
                 outputs.append(Image.fromarray(array))
-        return outputs, {"seconds": time.perf_counter() - started, "device": str(self.device), "steps": steps, "style_policy": "shared-document-latent"}
+        return outputs, {"seconds": time.perf_counter() - started, "device": str(self.device), "steps": steps,
+                         "style_policy": "shared-document-latent", "variant_policy":"bounded-context-residual",
+                         "variant_strength":variant_strength(stroke_variation,style_fidelity) if any(variants) else 0,
+                         "stroke_variation":stroke_variation,"style_fidelity":style_fidelity}
 
 
 INSTANCE = None

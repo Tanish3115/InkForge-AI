@@ -3,8 +3,8 @@ export const styles: Style[] = [
   {
     id: "classic",
     name: "Classic",
-    family: "Caveat",
-    file: "Caveat.ttf",
+    family: "InkForge Context",
+    file: "InkForgeContext.ttf",
     description: "Airy, informal strokes with an easy rhythm.",
     license: "/fonts/caveat-OFL.txt",
     characters: [

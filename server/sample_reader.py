@@ -34,6 +34,21 @@ def recognize(images, tokens=48, beams=1):
     return result
 
 
+def recognize_scored(images):
+    """The same cached TrOCR, with beam scores solely for orientation review."""
+    import torch
+    processor, model = reader()
+    result = []
+    with torch.inference_mode():
+        for start in range(0,len(images),4):
+            pixels=processor(images=images[start:start+4],return_tensors='pt').pixel_values
+            output=model.generate(pixels,max_new_tokens=48,num_beams=2,return_dict_in_generate=True,output_scores=True)
+            texts=processor.batch_decode(output.sequences,skip_special_tokens=True)
+            for text,score in zip(texts,output.sequences_scores):
+                result.append(dict(text=text.strip(),confidence=float(torch.exp(score).clamp(0,1))))
+    return result
+
+
 def decode_page(data):
     if not isinstance(data, str) or len(data) > 12_000_000 or not re.match(r'^data:image/(jpeg|png|webp);base64,', data):
         raise ValueError('Use a JPEG, PNG or WebP handwriting image below the page-size limit.')

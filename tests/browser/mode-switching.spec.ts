@@ -65,7 +65,7 @@ test('returning from an uploaded sample restores the chosen preset and all four 
   const saved=JSON.parse(await fs.readFile('.cache/mode-default-project.json','utf8'));
   expect(saved.engine).toBe('browser');expect(saved.styleId).toBe('flowing');expect(saved.profileId).toBeUndefined();
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.getByRole('button',{name:/My handwriting.*Upload a sample/}).click();
+  await page.getByRole('button',{name:/My handwriting.*Real IAM references/}).click();
   await expect(page.getByLabel('Personal profile',{exact:true})).toHaveValue('');
 });
 
@@ -76,13 +76,13 @@ test('both the deselect button and empty dropdown choice remove a sample without
   await page.getByRole('button',{name:'Deselect handwriting sample'}).click();
   await expect(selection).toHaveValue('');
   await expect(page.getByRole('region',{name:'Uploaded handwriting word library'})).toHaveCount(0);
-  await expect(page.getByRole('button',{name:'Generate handwriting',exact:true})).toBeDisabled();
+  await expect(page.getByRole('button',{name:'Generate handwriting',exact:true})).toBeEnabled();
   await expect(page.locator('.sidebar-profiles')).toContainText('Mode switching sample');
   await selection.selectOption(id);
   await expect(page.getByRole('region',{name:'Uploaded handwriting word library'})).toBeVisible();
   await selection.selectOption('');
   await expect(selection).toHaveValue('');
-  await expect(page.getByRole('button',{name:'Generate handwriting',exact:true})).toBeDisabled();
+  await expect(page.getByRole('button',{name:'Generate handwriting',exact:true})).toBeEnabled();
 });
 
 test('a delayed sample connection cannot reactivate neural mode after returning to a font',async({page})=>{
@@ -163,4 +163,37 @@ test('an old personal generation cannot replace a newly selected default font pr
   await expect(page.locator('.output-status')).toContainText('Flowing');
   await expect(page.locator('.error-banner')).toHaveCount(0);
   expect(await page.locator('canvas').evaluate((c:HTMLCanvasElement)=>c.toDataURL())).toBe(current);
+});
+
+
+test('without an upload My handwriting requests local IAM ink, never font references',async({page})=>{
+  await page.route('http://127.0.0.1:8000/health',route=>route.fulfill({json:{...healthy,human_reference:{ready:true,writer:'000'}},headers:cors}));
+  await page.goto('/#studio');
+  const source=await fixture(page);
+  let body:any;
+  await page.route('http://127.0.0.1:8000/generate',async route=>{
+    if(route.request().method()==='OPTIONS'){await route.fulfill({status:204,headers:cors});return;}
+    body=route.request().postDataJSON();
+    await route.fulfill({headers:cors,json:{words:body.words.map((text:string)=>({text,image:source.references[0],width:100}))}});
+  });
+  await page.getByRole('button',{name:/My handwriting.*Real IAM references/}).click();
+  await page.getByRole('textbox',{name:'Digital text',exact:true}).fill('hello future');
+  await expect(page.getByLabel('Generation engine')).toHaveValue('neural');
+  await expect(page.getByRole('button',{name:'Generate handwriting',exact:true})).toBeEnabled();
+  await render(page);
+  expect(body.reference_source).toBe('iam');
+  expect(body.references).toEqual([]);
+  await expect(page.locator('.output-status')).toContainText('real local IAM writer 000');
+});
+
+test('missing local IAM data produces an error without a font fallback',async({page})=>{
+  await page.route('http://127.0.0.1:8000/health',route=>route.fulfill({json:{...healthy,human_reference:{ready:false,reason:'Local IAM references are unavailable.'}},headers:cors}));
+  let requests=0;
+  await page.route('http://127.0.0.1:8000/generate',route=>{requests++;return route.abort();});
+  await page.goto('/#studio');
+  await page.getByRole('button',{name:/My handwriting.*Real IAM references/}).click();
+  await page.getByRole('button',{name:'Generate handwriting',exact:true}).click();
+  await expect(page.getByText('Local IAM references are unavailable.',{exact:true})).toBeVisible();
+  expect(requests).toBe(0);
+  await expect(page.locator('canvas')).toHaveCount(0);
 });

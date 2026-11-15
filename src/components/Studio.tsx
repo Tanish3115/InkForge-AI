@@ -102,6 +102,8 @@ export default function Studio({ onHome }: { onHome: () => void }) {
     openDocument,
     exportFile,
   } = useStudio();
+  const strokeControlAvailable = engine === "neural" || (mode === "default" && styleId === "classic");
+  const fidelityControlAvailable = mode === "personalized" || engine === "neural";
   return (
     <motion.div className="studio" initial={{opacity:0}} animate={{opacity:1}} transition={{duration:reducedMotion?0:.4}}>
       <div className="studio-ambient" aria-hidden="true"><span/><span/><i/></div>
@@ -370,7 +372,7 @@ export default function Studio({ onHome }: { onHome: () => void }) {
             <ScanIcon />
             <span>
               My handwriting
-              <small>Upload a sample, type, and generate.</small>
+              <small>Real IAM references; upload your own optionally.</small>
             </span>
             <Check size={14} />
           </button>
@@ -396,6 +398,7 @@ export default function Studio({ onHome }: { onHome: () => void }) {
           </div>
         ) : (
           <div className="personal-selection">
+            {!profile && mode === "personalized" && profiles.length > 0 && <p>Using five real human-written crops from local IAM writer 000. Uploading is optional. DiffusionPen generates new word images; no font references are used.</p>}
             {profile?.kind === "reference" && <UploadedWordLibrary profile={profile} text={text} onUpdate={updateProfile} onUseText={changeText} />}
             {profile && profile.kind !== "reference" && <div role="status"><strong>Advanced letter profile selected</strong><p>This older profile only contains individually sampled letters. For automatic generation of new text, upload your original handwriting image using Upload handwriting sample.</p></div>}
             {profile?.automaticSample && <details className="source-reference-details"><summary><Check size={13}/><strong>Sample ready</strong><span>{profile.sampleCount} style references</span></summary><div className="source-reference-strip">{profile.references?.slice(0, profile.sampleCount).map((src,i)=><img key={i} src={src} alt={`Selected handwriting reference ${i+1}`}/>)}</div><p>These references guide new-word synthesis. Matching words keep their original uploaded ink.</p></details>}
@@ -415,7 +418,7 @@ export default function Studio({ onHome }: { onHome: () => void }) {
                       else deselectProfile();
                     }}
                   >
-                    <option value="">Choose a profile</option>
+                    <option value="">Use local IAM human references</option>
                     {profiles.map((p) => (
                       <option value={p.id} key={p.id}>
                         {p.name} /{" "}
@@ -469,10 +472,10 @@ export default function Studio({ onHome }: { onHome: () => void }) {
               </>
             ) : (
               <div>
-                <strong>Your handwriting can live here.</strong>
+                <strong>Real human references, no upload required.</strong>
                 <p>
-                  Upload a photo of your handwriting. We select references
-                  automatically; no letter labels or manual crops needed.
+                  DiffusionPen uses five real handwritten crops from local IAM writer 000.
+                  Upload your own sample optionally to guide the style. The output is AI-generated, not a font.
                 </p>
               </div>
             )}
@@ -519,6 +522,7 @@ export default function Studio({ onHome }: { onHome: () => void }) {
             </header>
             <textarea
               aria-label="Digital text"
+              aria-describedby="digital-text-limit"
               placeholder="Type or paste your words here…"
               value={text}
               maxLength={30000}
@@ -531,16 +535,20 @@ export default function Studio({ onHome }: { onHome: () => void }) {
               }}
             />
             <footer>
-              <span>{text.length.toLocaleString()} characters</span>
+              <span>{text.length.toLocaleString()} / 30,000 characters</span>
               <span>
                 {text.trim() ? text.trim().split(/\s+/).length : 0} words
               </span>
             </footer>
+            <p id="digital-text-limit" className="composition-limit-note">
+              <strong>Up to 30,000 characters</strong> (roughly 4,000–5,000 words).
+              Spaces and line breaks count toward this limit.
+            </p>
             <div className="composition-actions">
               <button
                 className="button primary full"
                 disabled={
-                  busy || !text.trim() || (mode === "personalized" && !profile)
+                  busy || !text.trim()
                 }
                 onClick={() => void create()}
               >
@@ -581,6 +589,18 @@ export default function Studio({ onHome }: { onHome: () => void }) {
                 : "No upload required for default handwriting"}
           </span>
         </div>
+        {generated?.quality && (
+          <details className="handwriting-quality" aria-label="Document handwriting quality">
+            <summary>Handwriting quality · {generated.quality.checkedWords} words checked</summary>
+            <p>
+              {generated.quality.checkedLines} lines across {generated.quality.checkedPages} pages · {generated.quality.effectiveSize.toFixed(1)} px effective writing size
+              {generated.quality.normalizedImages ? ` · ${generated.quality.normalizedImages} ink samples normalized` : ""}.
+            </p>
+            <p>{generated.quality.sizeCorrections} source-size corrections · {generated.quality.variantsUsed} outline variants used.</p>
+            {!!generated.quality.warnings.length && <ul>{generated.quality.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>}
+            <small>Geometry checks cannot certify spelling, natural pen movements, or an exact writer match.</small>
+          </details>
+        )}
         {generated?.missing.length ? (
           <div className="missing-warning">
             Missing characters: <strong>{generated.missing.join(" ")}</strong>.
@@ -696,6 +716,7 @@ export default function Studio({ onHome }: { onHome: () => void }) {
             unit="px"
             onChange={(v) => set("size", v)}
           />
+          <p className="refinement-note">Writing renders at 80% of this nominal size ({(settings.size * .8).toFixed(1)} px). Saved size controls keep their original value.</p>
           <Slider
             title="Line spacing"
             value={settings.lineSpacing}
@@ -725,13 +746,49 @@ export default function Studio({ onHome }: { onHome: () => void }) {
             onChange={(v) => set("letterSpacing", v)}
           />
           <Slider
-            title="Natural variation"
+            title="Character variation"
             value={settings.variation}
             min={0}
             max={1}
-            step={0.05}
+            step={0.01}
             onChange={(v) => set("variation", v)}
           />
+          <Slider
+            title="Word-size consistency"
+            value={settings.wordConsistency ?? defaults.wordConsistency!}
+            min={0}
+            max={1}
+            step={0.05}
+            onChange={(v) => set("wordConsistency", v)}
+          />
+          <Slider
+            title="Stroke variation"
+            value={settings.strokeVariation ?? defaults.strokeVariation!}
+            min={0}
+            max={1}
+            step={0.01}
+            disabled={!strokeControlAvailable}
+            onChange={(v) => set("strokeVariation", v)}
+          />
+          <p className="refinement-note">{strokeControlAvailable ? engine === "neural" ? "Controls bounded alternate-candidate strength. It does not reconstruct physical pen pressure or change every unique word." : "Varies Classic's authored weight axis within a small range. This is not measured pen pressure." : "Captured strokes and fixed-font outlines are preserved. Stroke variation is available for Classic and neural rendering."}</p>
+          <Slider
+            title="Baseline variation"
+            value={settings.baselineVariation ?? defaults.baselineVariation!}
+            min={0}
+            max={1}
+            step={0.05}
+            onChange={(v) => set("baselineVariation", v)}
+          />
+          <Slider
+            title="Handwriting style fidelity"
+            value={settings.styleFidelity ?? defaults.styleFidelity!}
+            min={0}
+            max={1}
+            step={0.05}
+            disabled={!fidelityControlAvailable}
+            onChange={(v) => set("styleFidelity", v)}
+          />
+          <p className="refinement-note">{fidelityControlAvailable ? "Higher values favor closer captured variants and reduce neural alternate strength; this is not a writer-match accuracy score." : "The selected browser font defines its style. Reference fidelity applies to personal samples and neural rendering."}</p>
           <Slider
             title="Writing slant"
             value={settings.slant}
@@ -756,7 +813,7 @@ export default function Studio({ onHome }: { onHome: () => void }) {
               value={engine}
               onChange={(e) => setEngine(e.target.value as typeof engine)}
             >
-              <option value="browser" disabled={mode === "personalized" && profile?.kind === "reference"}>Browser rendering</option>
+              <option value="browser" disabled={mode === "personalized" && (!profile || profile.kind === "reference")}>Browser rendering</option>
               <option value="neural">Local neural synthesis</option>
             </select>
           </label>

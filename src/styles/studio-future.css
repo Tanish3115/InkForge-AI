@@ -91,6 +91,8 @@
 .studio .composition > textarea { background: #0e1928b0; color: #dce6ec; font-size: 13px; line-height: 1.95; padding: 22px 18px; min-height: 170px; caret-color: #b5ffe2; }
 .studio .composition > textarea::placeholder { color: #5b7a94; }
 .studio .composition > footer { border-color: #8ab4cf1c; color: #7695a9; font-size: 9px; padding: 10px 14px; }
+.studio .composition-limit-note { margin: 0; padding: 11px 16px; color: #a4bacb; background: #0e1928b0; font-size: 11px; line-height: 1.7; }
+.studio .composition-limit-note strong { color: #c7dce6; font-weight: 500; }
 .studio .composition-actions { background: #111f309c; border-color: #8ab4cf1c; padding: 16px; }
 .studio .composition-actions .button { min-height: 45px; border-radius: 10px; font-size: 12px; }
 .studio .regenerate { color: #89adae; font-size: 9px; }

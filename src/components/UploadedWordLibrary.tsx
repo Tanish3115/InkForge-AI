@@ -50,7 +50,7 @@ export default function UploadedWordLibrary({ profile, text, onUpdate, onUseText
     <progress className="word-library-progress" aria-label="Original handwriting word coverage" max={coverage.total || 1} value={coverage.found.length} />
     <details className="word-library-details">
       <summary>
-        <span>Review the text read from your sample <small>({words.length} word crops)</small></span>
+        <span>Review the text read from your sample <small>({words.length} word crops{profile.pdf?` · PDF pages ${profile.pdf.pages.join(', ')}`:''})</small></span>
         <ChevronDown size={15} aria-hidden="true" />
       </summary>
       <div className="word-library-review" tabIndex={0} role="region" aria-label="Recognized sample review">
@@ -79,8 +79,8 @@ export default function UploadedWordLibrary({ profile, text, onUpdate, onUseText
         {profile.sourceReadWarnings?.map((warning, index) => <p className="word-library-warning" key={index}>{warning}</p>)}
         <div className="word-library-grid-heading"><span>Original word crops</span><span>Edit a label to correct it</span></div>
         <div className="uploaded-word-grid">{words.map((word, index) => <label className="uploaded-word-card" key={word.id}>
-          <span className="uploaded-word-number" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
-          <img src={word.image} alt={`Original uploaded word ${index + 1}`} loading="lazy" />
+          <span className="uploaded-word-number" aria-hidden="true">{word.page?`p${word.page} · `:''}{String(index + 1).padStart(2, '0')}</span>
+          <img src={word.image} alt={`Original uploaded word ${index + 1}${word.page?` from PDF page ${word.page}`:''}`} loading="lazy" />
           <input aria-label={`Uploaded word label ${index + 1}`} value={word.text} maxLength={160} onChange={event => commit(words.map((sample, sampleIndex) => sampleIndex === index ? { ...sample, text: event.target.value } : sample))} />
         </label>)}</div>
       </div>
